@@ -1,0 +1,198 @@
+import cv2
+import numpy as np
+import sys
+import matplotlib.pyplot as plt
+from google.colab.patches import cv2_imshow
+%matplotlib inline
+
+#オリジナル画像
+#imread()で画像ファイルを読み込むと色の順番がBGR（青、緑、赤）になる
+img1 = cv2.imread('image.jpg')
+org_img = img1
+#BGR形式で読み込まれているので、RGB形式に変換
+img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
+#サングラスの描画
+img2 = cv2.imread('nc176354.png')
+#BGR形式で読み込まれているので、RGB形式に変換
+img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+
+#大小設定
+large_img = img1
+small_img = img2
+
+#顔認識
+##グレースケールに変換
+##画像を判別する際に情報量が多すぎるとメモリを圧迫するから、
+##カラーからグレーに変えて、情報を排除することで計算量を抑えている。
+#赤(255,0,0)緑(0,255,0)青(0,0,255)
+#large_imgに書き込み
+src_gray = cv2.cvtColor(large_img, cv2.COLOR_BGR2GRAY)
+face_cascade = cv2.CascadeClassifier("lbpcascade_animeface.xml")
+faces = face_cascade.detectMultiScale(src_gray)
+
+#赤枠を描画
+for x, y, w, h in faces:
+    cv2.rectangle(large_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
+
+#画像を表示
+plt.imshow(large_img)
+
+#関心領域（ROI）を作成する
+#サイズ確認
+img1.shape
+
+#ROIを作る為のオフセットの位置（枠内に設定)
+x_offset=x
+y_offset=y
+
+rows,cols,channels = img2.shape
+roi = img1[y_offset : y-100 + h, x_offset : x + w]
+#大きさ合わせる
+img2 =cv2.resize(img2,(w,h-100))
+#画像を表示
+plt.imshow(roi)
+#マスク作成
+img2gray = cv2.cvtColor(img2,cv2.COLOR_BGR2GRAY)
+img2gray.shape
+plt.imshow(img2gray,cmap='gray')
+#逆マスク
+mask_inv = cv2.bitwise_not(img2gray)
+mask_inv.shape
+plt.imshow(mask_inv,cmap='gray')
+#マスクを３カラーチャンネルに変換
+white_background = np.full(img2.shape, 255, dtype=np.uint8)
+bk = cv2.bitwise_or(white_background, white_background, mask=mask_inv)
+bk.shape
+#逆マスクに出力
+cv2_imshow(bk)
+#元の画像をマスクに出力
+plt.imshow(mask_inv,cmap='gray')
+#元画像のimg2を逆マスクに出力
+fg = cv2.bitwise_or(img2, img2, mask=mask_inv)
+plt.imshow(fg)
+#サイズ確認
+fg.shape
+roi.shape
+#roiの上にfgを乗せて合成
+final_roi = np.where(fg==(0,0,0), roi, fg)
+plt.imshow(final_roi)
+#画像の残りの部分を追加する
+large_img = img1
+small_img = final_roi
+large_img[y_offset:y_offset+small_img.shape[0], x_offset:x_offset+small_img.shape[1]] = small_img
+#画像を表示
+large_img = cv2.cvtColor(large_img, cv2.COLOR_BGR2RGB)
+plt.imshow(large_img)
+
+#エッジ検出 (Canny)（線画化）
+img_canny = cv2.Canny(large_img,100,100)
+ret, img_thresh = cv2.threshold(img_canny, 125, 255, cv2.THRESH_BINARY)
+#表示
+cv2_imshow(img_canny)
+
+#8近傍の定義
+neiborhood8 = np.array([[1, 1, 1],
+                        [1, 1, 1],
+                        [1, 1, 1]], np.uint8)
+#4近傍の定義
+neiborhood4 = np.array([[0, 1, 0],
+                        [1, 1, 1],
+                        [0, 1, 0]], dtype=np.uint8)
+
+#8近傍で膨張処理
+img_dilation8 = cv2.dilate(img_thresh, neiborhood8,iterations=1)
+#表示
+cv2_imshow(img_dilation8)
+
+img_diff8 = cv2.absdiff(img_thresh, img_dilation8)
+#表示
+cv2_imshow(img_diff8)
+
+img_diff_not8 = cv2.bitwise_not(img_diff8)
+#表示
+cv2_imshow(img_diff_not8)
+
+#8近傍で縮小処理
+img_erosion8 = cv2.erode(img_diff_not8, neiborhood8, iterations=1)
+#表示
+cv2_imshow(img_erosion8)
+
+#4近傍で膨張処理
+img_dilation4 = cv2.dilate(img_thresh, neiborhood4,iterations=1)
+#表示
+cv2_imshow(img_dilation4)
+
+#左にずらした画像
+height, width = img_canny.shape[:2]
+tx, ty = 3, 3
+#アフィン変換: 平行移動
+mv_mat = np.float32([[1, 0, tx],[0, 1, ty]])
+afin_img = cv2.warpAffine(img_thresh, mv_mat, (width, height))
+cv2_imshow(afin_img)
+
+#右にずらした画像
+height, width = img_thresh.shape[:2]
+tx, ty = -3, 3
+#アフィン変換: 平行移動
+mv_mat1 = np.float32([[1, 0, tx],[0, 1, ty]])
+afin_img1 = cv2.warpAffine(img_dilation8, mv_mat1, (width, height))
+cv2_imshow(afin_img1)
+
+#上にずらした画像
+height, width = img_thresh.shape[:2]
+tx, ty = -3, -3
+#アフィン変換: 平行移動
+mv_mat2 = np.float32([[1, 0, tx],[0, 1, ty]])
+afin_img2 = cv2.warpAffine(img_diff8, mv_mat2, (width, height))
+cv2_imshow(afin_img2)
+
+#下にずらした画像
+height, width = img_thresh.shape[:2]
+tx, ty = 3, -3
+#アフィン変換: 平行移動
+mv_mat3 = np.float32([[1, 0, tx],[0, 1, ty]])
+afin_img3 = cv2.warpAffine(img_dilation4, mv_mat3, (width, height))
+cv2_imshow(afin_img3)
+
+#画像の白い部分をほかの色に置き換える
+black = [0, 0, 0]
+white = [255, 255, 255]
+cyan = [0, 255, 255]
+yellow = [255, 255, 0]
+mazenda = [255, 0, 255]
+img_cyan = np.where(afin_img[..., np.newaxis] == 255, cyan, black)
+cv2_imshow(img_cyan)
+img_yellow = np.where(afin_img1[..., np.newaxis] == 255, yellow, black)
+cv2_imshow(img_yellow)
+img_mazenda = np.where(afin_img2[..., np.newaxis] == 255, mazenda, black)
+cv2_imshow(img_mazenda)
+img_white = np.where(afin_img3[..., np.newaxis] == 255, white, black)
+cv2_imshow(img_white)
+img_thresh = np.where(img_thresh[..., np.newaxis] == 255, white, black)
+
+#画像をブレンド
+# 第一引数(必須) : 多次元配列(numpy.ndarray)
+# 第二引数(必須) : alpha。第一引数の画像へ掛け合わせる係数。
+# 第三引数(必須) : 多次元配列(numpy.ndarray)
+# 第四引数(必須) : beta。第三引数の画像へ掛け合わせる係数。
+# 第五引数(必須) : gamma。画素の値を微調整するために利用する
+img_final = cv2.addWeighted(img_thresh, 1, img_cyan, 0.5, 0)
+img_final = cv2.addWeighted(img_final, 1, img_yellow, 0.5, 0)
+img_final = cv2.addWeighted(img_final, 1, img_mazenda, 0.5, 0)
+img_final = cv2.addWeighted(img_final, 1, img_white, 0.5, 0)
+
+# アルファ値を作成する。
+w = large_img.shape[1]
+alpha = np.linspace(0, 1, w).reshape(1, w, 1)  # (1, W, 1)
+img_final = img_final * alpha + large_img * (1 - alpha)
+
+##最終描画
+#fig = plt.figure(dpi=100, figsize=(40,40))
+#ax = fig.add_subplot(1,3,1)
+#ax.set_title("COOL", fontsize=20)
+#plt.imshow(img_final)
+cv2_imshow(img_final)
+org_img = cv2.cvtColor(org_img, cv2.COLOR_BGR2RGB)
+plt.imshow(org_img)
+#画像をsaveする際の処理
+cv2.imwrite("img_final.png", img_final)
